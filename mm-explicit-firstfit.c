@@ -85,17 +85,19 @@ int mm_init(void)
   }
 
   PUT(heap_listp, 0);                                 /*    Alignment padding   */
-  // Free block list 
+  /*  
+  *   Free block 제일 처음 블록을 생성 해주는 작업이다. 첫 블록의 Next를 아래와 같이 설정 해주고
+  *   마지막에 추가되는 블록의 Next로 첫 블록의 Payload 주소를 넣어준다면 마지막 블록이라는 것을 나타낼 수 있다.
+  */
   PUT(heap_listp + (1*WSIZE), PACK(2*DSIZE, 1));      /*    Prologue Header     */
   PUT(heap_listp + (2*WSIZE), heap_listp+(3*WSIZE));  /*    PREV POINTER        */
   PUT(heap_listp + (3*WSIZE), heap_listp+(2*WSIZE));  /*    NEXT POINTER        */
   PUT(heap_listp + (4*WSIZE), PACK(2*DSIZE, 1));      /*    Prologue Footer     */
-  // Free block list 
   PUT(heap_listp + (5*WSIZE), PACK(0, 1));            /*    Epilogue Header     */
   
   /*
   * 제일 처음 가용 블록의 시작 주소는 Prologue 블록 바로 뒤에 온다.
-  * 가용 블록 리스트의 루트를 heap_listp로 지정한다.
+  * 가용 블록 리스트의 루트를 heap_listp의 Next로 지정한다.
   */
   heap_listp += (2*WSIZE);
 
@@ -117,21 +119,21 @@ static void *coalesce(void *bp)
   // 이전과 다음 블록이 모두 할당되어 있다.
   // 현재 블록은 할당에서 가용상태로 변경
   if (prev_alloc && next_alloc) { /* CASE 1 */
-    list_add(bp);
+    list_add(bp); // free block이 생기는 것이기 때문에 free block 리스트에 이어준다.
     return bp;
   }
   // 이전 블록은 할당상태, 다음 블록은 가용상태다.
   // 현재 블록은 다음 블록과 통합
   // 현재 블록과 다음 블록의 풋터는 현재와 다음 블록의 크기를 합한 것으로 갱신
   else if (prev_alloc && !next_alloc) { /* CASE 2 */
-    list_remove(NEXT_BLKP(bp));
+    list_remove(NEXT_BLKP(bp)); // 다음 블록이 현재 블록과 합쳐지기 때문에 free block 리스트에서 다음 블록을 제거한다.
     size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
     PUT(HDRP(bp),PACK(size,0));
     PUT(FTRP(bp), PACK(size,0));
   }
   // 이전 블록은 가용상태, 다음 블록은 할당상태다.
   else if (!prev_alloc && next_alloc) { /* CASE 3 */
-    list_remove(PREV_BLKP(bp));
+    list_remove(PREV_BLKP(bp)); // 이전 블록이 현재 블록과 합쳐지기 때문에 free block 리스트에서 이전 블록을 제거한다.
     size += GET_SIZE(HDRP(PREV_BLKP(bp)));
     PUT(FTRP(bp), PACK(size, 0));
     PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
@@ -139,13 +141,15 @@ static void *coalesce(void *bp)
   }
   // 이전 블록과 다음 블록 모두 가용상태다.
   else {
-    list_remove(PREV_BLKP(bp));
+    // 케이스 2, 3 모두 해당하기 때문에 이전, 이후 블록들을 free block 리스트에서 제거 한다.
+    list_remove(PREV_BLKP(bp)); 
     list_remove(NEXT_BLKP(bp));
     size += GET_SIZE(HDRP(PREV_BLKP(bp))) + GET_SIZE(FTRP(NEXT_BLKP(bp)));
     PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
     PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
     bp = PREV_BLKP(bp);
   }
+  // 합쳐진 free block을 리스트에 추가한다.
   list_add(bp);
   return bp;
 }
@@ -184,8 +188,12 @@ void mm_free(void *bp)
 
 // first-fit 방식
 static void *find_fit(size_t asize) {
+  // bp는 가용 블록 리스트의 root
+  // heap_listp의 NEXT는 항상 root 블록을 가리키고 있다.
   void *bp = NEXT_P(heap_listp);
 
+  // bp의 NEXT를 탐색하다가 해당 블록의 헤더가 할당 상태라면 종료한다.
+  // 마지막 블록은 heap_listp의 payload 주소 부분을 가리키고 있으며 이 블록은 항상 할당 상태에 있다.
   for(bp; !GET_ALLOC(HDRP(bp)); bp = NEXT_P(bp)) {
     if (asize <= GET_SIZE(HDRP(bp))) {
       return bp;
@@ -233,7 +241,6 @@ void *mm_malloc(size_t size)
     asize = DSIZE * ((size + (DSIZE) + (DSIZE-1)) / DSIZE); // DSIZE 앞은 header + footer size 
   }
 
-  // find-fit 방식 채택시 54점 / next-fit 방식 채택시 82점
   if ((bp = find_fit(asize)) != NULL) {
     place(bp, asize);
     return bp;
